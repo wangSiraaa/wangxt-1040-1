@@ -1,15 +1,22 @@
 import { getDb, saveDbToDisk, queryAll } from '../database.js'
 import { LATE_THRESHOLD_MINUTES, OVERTIME_INTERVAL_MINUTES, OVERTIME_RATE_PER_INTERVAL, OVERTIME_MAX_CHARGE } from '../config.js'
 import { addLog } from './operationLogService.js'
+import { checkAndExpireReservations } from './reservationService.js'
+import { checkAndExpireMonthlyCards } from './monthlyCardService.js'
+import { addTimelineEvent } from './timelineService.js'
 
 let schedulerRunning = false
 let lateCheckInterval: NodeJS.Timeout | null = null
 let overtimeCheckInterval: NodeJS.Timeout | null = null
 let saveInterval: NodeJS.Timeout | null = null
+let reservationCheckInterval: NodeJS.Timeout | null = null
+let monthlyCardCheckInterval: NodeJS.Timeout | null = null
 
 const LATE_CHECK_INTERVAL_MS = 30000
 const OVERTIME_CHECK_INTERVAL_MS = 60000
 const SAVE_INTERVAL_MS = 10000
+const RESERVATION_CHECK_INTERVAL_MS = 60000
+const MONTHLY_CARD_CHECK_INTERVAL_MS = 3600000
 
 export async function startScheduler(): Promise<void> {
   if (schedulerRunning) return
@@ -26,6 +33,14 @@ export async function startScheduler(): Promise<void> {
     void checkOvertimeWashes().catch(err => console.error('[Scheduler] Overtime check error:', err))
   }, OVERTIME_CHECK_INTERVAL_MS)
 
+  reservationCheckInterval = setInterval(() => {
+    void runReservationExpiryCheck().catch(err => console.error('[Scheduler] Reservation expiry check error:', err))
+  }, RESERVATION_CHECK_INTERVAL_MS)
+
+  monthlyCardCheckInterval = setInterval(() => {
+    void runMonthlyCardExpiryCheck().catch(err => console.error('[Scheduler] Monthly card expiry check error:', err))
+  }, MONTHLY_CARD_CHECK_INTERVAL_MS)
+
   saveInterval = setInterval(() => {
     try {
       saveDbToDisk()
@@ -36,16 +51,50 @@ export async function startScheduler(): Promise<void> {
 
   void checkLateArrivals()
   void checkOvertimeWashes()
+  void runReservationExpiryCheck()
+  void runMonthlyCardExpiryCheck()
 
   console.log('[Scheduler] Scheduler started successfully')
+}
+
+async function runReservationExpiryCheck(): Promise<void> {
+  const result = await checkAndExpireReservations()
+  if (result.expiredCount > 0 || result.noShowCount > 0) {
+    console.log(`[Scheduler] Reservation check: ${result.expiredCount} expired, ${result.noShowCount} no_show`)
+    await addTimelineEvent({
+      event_type: 'reservation_batch_expire',
+      operator_role: 'system',
+      operator_name: 'system',
+      details: `调度器检查：${result.expiredCount}个预约过期，${result.noShowCount}个爽约`,
+      metadata: { expired_count: result.expiredCount, no_show_count: result.noShowCount },
+    })
+  }
+}
+
+async function runMonthlyCardExpiryCheck(): Promise<void> {
+  const result = await checkAndExpireMonthlyCards()
+  if (result.expiredCount > 0) {
+    console.log(`[Scheduler] Monthly card check: ${result.expiredCount} expired`)
+    await addTimelineEvent({
+      event_type: 'monthly_card_batch_expire',
+      operator_role: 'system',
+      operator_name: 'system',
+      details: `调度器检查：${result.expiredCount}张月卡过期`,
+      metadata: { expired_count: result.expiredCount },
+    })
+  }
 }
 
 export function stopScheduler(): void {
   if (lateCheckInterval) clearInterval(lateCheckInterval)
   if (overtimeCheckInterval) clearInterval(overtimeCheckInterval)
+  if (reservationCheckInterval) clearInterval(reservationCheckInterval)
+  if (monthlyCardCheckInterval) clearInterval(monthlyCardCheckInterval)
   if (saveInterval) clearInterval(saveInterval)
   lateCheckInterval = null
   overtimeCheckInterval = null
+  reservationCheckInterval = null
+  monthlyCardCheckInterval = null
   saveInterval = null
   schedulerRunning = false
   console.log('[Scheduler] Scheduler stopped')

@@ -18,6 +18,9 @@ import orderRoutes from './routes/orders.js'
 import faultRoutes from './routes/faults.js'
 import statsRoutes from './routes/stats.js'
 import operationLogRoutes from './routes/operationLogs.js'
+import reservationRoutes from './routes/reservations.js'
+import monthlyCardRoutes from './routes/monthlyCards.js'
+import timelineRoutes from './routes/timeline.js'
 
 // for esm mode
 const __filename = fileURLToPath(import.meta.url)
@@ -42,6 +45,9 @@ app.use('/api/orders', orderRoutes)
 app.use('/api/faults', faultRoutes)
 app.use('/api/stats', statsRoutes)
 app.use('/api/operation-logs', operationLogRoutes)
+app.use('/api/reservations', reservationRoutes)
+app.use('/api/monthly-cards', monthlyCardRoutes)
+app.use('/api/timeline', timelineRoutes)
 
 /**
  * health

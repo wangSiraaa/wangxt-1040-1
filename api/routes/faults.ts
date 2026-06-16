@@ -42,4 +42,54 @@ router.get('/stats', async (req: Request, res: Response): Promise<void> => {
   }
 })
 
+router.get('/transfers/pending', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await faultService.getPendingTransfers()
+    res.json({ success: true, data: result })
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+router.get('/:id/transfers', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id)
+    const result = await faultService.getTransfersByFault(id)
+    res.json({ success: true, data: result })
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+router.post('/transfers/:id/execute', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id)
+    const { operator_name } = req.body
+    const result = await faultService.executeTransfer(id, operator_name || 'system')
+    res.json({ success: true, data: result })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
+
+router.post('/transfers/:id/confirm', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id)
+    const { decision, operator_name, custom_refund_amount } = req.body
+    if (!decision || (decision !== 'refund' && decision !== 'requeue')) {
+      res.status(400).json({ success: false, error: 'decision must be refund or requeue' })
+      return
+    }
+    const result = await faultService.confirmManualTransfer(
+      id,
+      decision,
+      operator_name || 'system',
+      custom_refund_amount ? Number(custom_refund_amount) : undefined,
+    )
+    res.json({ success: true, data: result })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
+
 export default router

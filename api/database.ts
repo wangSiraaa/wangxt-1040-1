@@ -61,12 +61,13 @@ function createTables(database: Database): void {
       car_type TEXT NOT NULL CHECK(car_type IN ('suv','sedan','mpv','van')),
       service_package TEXT NOT NULL CHECK(service_package IN ('standard','premium','interior','full')),
       payment_method TEXT NOT NULL CHECK(payment_method IN ('online','onsite','member')),
-      payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK(payment_status IN ('unpaid','paid','refunded')),
+      payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK(payment_status IN ('unpaid','paid','refunded','partial_refund')),
       base_amount INTEGER NOT NULL DEFAULT 0,
       overtime_amount INTEGER NOT NULL DEFAULT 0,
       total_amount INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','washing','completed','cancelled')),
+      status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','washing','completed','cancelled','transferred')),
       bay_id INTEGER,
+      reservation_id INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       started_at TEXT,
       completed_at TEXT,
@@ -85,11 +86,13 @@ function createTables(database: Database): void {
       estimated_arrival_minutes INTEGER NOT NULL DEFAULT 15,
       payment_method TEXT NOT NULL CHECK(payment_method IN ('online','onsite','member')),
       position INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting','called','serving','completed','cancelled')),
+      status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting','called','serving','completed','cancelled','reserved','no_show','vip_skip')),
+      queue_type TEXT NOT NULL DEFAULT 'normal' CHECK(queue_type IN ('normal','reservation','monthly_card','vip_skip')),
       joined_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       called_at TEXT,
       cancelled_at TEXT,
       cancel_reason TEXT,
+      reserved_arrival_time TEXT,
       FOREIGN KEY (order_id) REFERENCES orders(id),
       FOREIGN KEY (assigned_bay_id) REFERENCES bays(id)
     )
@@ -99,7 +102,7 @@ function createTables(database: Database): void {
     CREATE TABLE IF NOT EXISTS billings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_id INTEGER NOT NULL,
-      billing_type TEXT NOT NULL CHECK(billing_type IN ('base','overtime','refund')),
+      billing_type TEXT NOT NULL CHECK(billing_type IN ('base','overtime','refund','partial_refund','transfer_refund','transfer_charge','monthly_card','no_show_fee')),
       amount INTEGER NOT NULL,
       description TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -116,6 +119,7 @@ function createTables(database: Database): void {
       description TEXT,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','resolved')),
       estimated_loss_cents INTEGER NOT NULL DEFAULT 0,
+      actual_loss_cents INTEGER NOT NULL DEFAULT 0,
       reported_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       resolved_at TEXT,
       reported_by TEXT,
@@ -134,6 +138,98 @@ function createTables(database: Database): void {
       target_order_id INTEGER,
       details TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )
+  `)
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS monthly_cards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plate_number TEXT NOT NULL UNIQUE,
+      card_type TEXT NOT NULL CHECK(card_type IN ('basic','premium','ultimate')),
+      total_washes INTEGER NOT NULL DEFAULT 0,
+      remaining_washes INTEGER NOT NULL DEFAULT 0,
+      total_reservations INTEGER NOT NULL DEFAULT 0,
+      remaining_reservations INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','expired','frozen')),
+      valid_from TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      valid_until TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )
+  `)
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS reservations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plate_number TEXT NOT NULL,
+      monthly_card_id INTEGER,
+      car_type TEXT NOT NULL CHECK(car_type IN ('suv','sedan','mpv','van')),
+      service_package TEXT NOT NULL CHECK(service_package IN ('standard','premium','interior','full')),
+      reserved_time TEXT NOT NULL,
+      grace_minutes INTEGER NOT NULL DEFAULT 15,
+      status TEXT NOT NULL DEFAULT 'reserved' CHECK(status IN ('reserved','checked_in','no_show','cancelled','expired')),
+      no_show_fee INTEGER NOT NULL DEFAULT 0,
+      order_id INTEGER,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      checked_in_at TEXT,
+      cancelled_at TEXT,
+      expired_at TEXT,
+      cancel_reason TEXT,
+      FOREIGN KEY (monthly_card_id) REFERENCES monthly_cards(id),
+      FOREIGN KEY (order_id) REFERENCES orders(id)
+    )
+  `)
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS order_transfers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fault_id INTEGER NOT NULL,
+      from_order_id INTEGER NOT NULL,
+      to_order_id INTEGER,
+      from_bay_id INTEGER NOT NULL,
+      to_bay_id INTEGER,
+      transfer_type TEXT NOT NULL CHECK(transfer_type IN ('requeue','refund','new_bay','manual_confirm')),
+      refund_amount INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','cancelled','awaiting_confirmation')),
+      confirmed_by TEXT,
+      confirmed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      notes TEXT,
+      FOREIGN KEY (fault_id) REFERENCES faults(id),
+      FOREIGN KEY (from_order_id) REFERENCES orders(id),
+      FOREIGN KEY (to_order_id) REFERENCES orders(id)
+    )
+  `)
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS timeline_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL CHECK(event_type IN (
+        'queue_join','queue_call','queue_cancel','queue_no_show','queue_vip_skip',
+        'reservation_create','reservation_checkin','reservation_no_show','reservation_cancel','reservation_expire',
+        'wash_start','wash_complete','wash_overtime',
+        'fault_report','fault_resolve','fault_transfer','fault_manual_confirm',
+        'order_transfer','order_refund','order_pay',
+        'bay_idle','bay_occupied','bay_fault','bay_overtime'
+      )),
+      bay_id INTEGER,
+      order_id INTEGER,
+      queue_entry_id INTEGER,
+      reservation_id INTEGER,
+      fault_id INTEGER,
+      transfer_id INTEGER,
+      event_time TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      operator_role TEXT,
+      operator_name TEXT,
+      details TEXT,
+      metadata TEXT,
+      FOREIGN KEY (bay_id) REFERENCES bays(id),
+      FOREIGN KEY (order_id) REFERENCES orders(id),
+      FOREIGN KEY (queue_entry_id) REFERENCES queue_entries(id),
+      FOREIGN KEY (reservation_id) REFERENCES reservations(id),
+      FOREIGN KEY (fault_id) REFERENCES faults(id),
+      FOREIGN KEY (transfer_id) REFERENCES order_transfers(id)
     )
   `)
 }

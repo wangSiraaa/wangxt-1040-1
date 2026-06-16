@@ -160,6 +160,190 @@ export async function getCancellationStats() {
   }
 }
 
+export async function getReservationStats() {
+  const db = await getDb()
+
+  const totalResult = db.exec('SELECT COUNT(*) as cnt FROM reservations')
+  const totalReservations = Number(totalResult[0]?.values[0]?.[0] ?? 0)
+
+  const reservedResult = db.exec("SELECT COUNT(*) as cnt FROM reservations WHERE status = 'reserved'")
+  const reservedCount = Number(reservedResult[0]?.values[0]?.[0] ?? 0)
+
+  const checkedInResult = db.exec("SELECT COUNT(*) as cnt FROM reservations WHERE status = 'checked_in'")
+  const checkedInCount = Number(checkedInResult[0]?.values[0]?.[0] ?? 0)
+
+  const noShowResult = db.exec("SELECT COUNT(*) as cnt FROM reservations WHERE status = 'no_show'")
+  const noShowCount = Number(noShowResult[0]?.values[0]?.[0] ?? 0)
+
+  const cancelledResult = db.exec("SELECT COUNT(*) as cnt FROM reservations WHERE status = 'cancelled'")
+  const cancelledCount = Number(cancelledResult[0]?.values[0]?.[0] ?? 0)
+
+  const expiredResult = db.exec("SELECT COUNT(*) as cnt FROM reservations WHERE status = 'expired'")
+  const expiredCount = Number(expiredResult[0]?.values[0]?.[0] ?? 0)
+
+  const noShowFeeResult = db.exec(
+    "SELECT COALESCE(SUM(no_show_fee), 0) as total FROM reservations WHERE status = 'no_show'",
+  )
+  const totalNoShowFeeCents = Number(noShowFeeResult[0]?.values[0]?.[0] ?? 0)
+
+  const vipSkipResult = db.exec("SELECT COUNT(*) as cnt FROM reservations WHERE skipped_line = 1")
+  const vipSkipCount = Number(vipSkipResult[0]?.values[0]?.[0] ?? 0)
+
+  const byDate = queryAll(
+    `SELECT DATE(reserved_time) as date,
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'checked_in' THEN 1 ELSE 0 END) as checked_in,
+            SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) as no_show,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+            COALESCE(SUM(CASE WHEN status = 'no_show' THEN no_show_fee ELSE 0 END), 0) as no_show_fee
+     FROM reservations
+     GROUP BY DATE(reserved_time)
+     ORDER BY date DESC LIMIT 30`,
+  )
+
+  const utilizationRate = totalReservations > 0
+    ? Math.round(((checkedInCount + noShowCount) / totalReservations) * 100)
+    : 0
+  const noShowRate = (checkedInCount + noShowCount) > 0
+    ? Math.round((noShowCount / (checkedInCount + noShowCount)) * 100)
+    : 0
+
+  return {
+    totalReservations,
+    reservedCount,
+    checkedInCount,
+    noShowCount,
+    cancelledCount,
+    expiredCount,
+    vipSkipCount,
+    totalNoShowFeeCents,
+    utilizationRate,
+    noShowRate,
+    byDate,
+  }
+}
+
+export async function getFaultTransferStats() {
+  const db = await getDb()
+
+  const totalTransfersResult = db.exec('SELECT COUNT(*) as cnt FROM order_transfers')
+  const totalTransfers = Number(totalTransfersResult[0]?.values[0]?.[0] ?? 0)
+
+  const completedResult = db.exec("SELECT COUNT(*) as cnt FROM order_transfers WHERE status = 'completed'")
+  const completedTransfers = Number(completedResult[0]?.values[0]?.[0] ?? 0)
+
+  const pendingResult = db.exec("SELECT COUNT(*) as cnt FROM order_transfers WHERE status = 'pending'")
+  const pendingTransfers = Number(pendingResult[0]?.values[0]?.[0] ?? 0)
+
+  const awaitingResult = db.exec("SELECT COUNT(*) as cnt FROM order_transfers WHERE status = 'awaiting_confirmation'")
+  const awaitingTransfers = Number(awaitingResult[0]?.values[0]?.[0] ?? 0)
+
+  const refundResult = db.exec(
+    "SELECT COALESCE(SUM(refund_amount), 0) as total FROM order_transfers WHERE status = 'completed'",
+  )
+  const totalRefundCents = Number(refundResult[0]?.values[0]?.[0] ?? 0)
+
+  const byTypeResult = db.exec(
+    "SELECT transfer_type, COUNT(*) as cnt, COALESCE(SUM(refund_amount), 0) as total_refund FROM order_transfers GROUP BY transfer_type",
+  )
+  const byType: Record<string, { count: number; totalRefund: number }> = {}
+  if (byTypeResult[0]) {
+    for (const row of byTypeResult[0].values) {
+      byType[String(row[0])] = {
+        count: Number(row[1]),
+        totalRefund: Number(row[2]),
+      }
+    }
+  }
+
+  const byFaultResult = queryAll(
+    `SELECT f.id as fault_id, f.fault_type, f.severity,
+            COUNT(ot.id) as transfer_count,
+            COALESCE(SUM(ot.refund_amount), 0) as total_refund
+     FROM faults f
+     LEFT JOIN order_transfers ot ON ot.fault_id = f.id
+     GROUP BY f.id
+     ORDER BY transfer_count DESC LIMIT 20`,
+  )
+
+  const actualLossResult = db.exec('SELECT COALESCE(SUM(actual_loss_cents), 0) as total FROM faults')
+  const totalActualLossCents = Number(actualLossResult[0]?.values[0]?.[0] ?? 0)
+
+  const estimatedLossResult = db.exec('SELECT COALESCE(SUM(estimated_loss_cents), 0) as total FROM faults')
+  const totalEstimatedLossCents = Number(estimatedLossResult[0]?.values[0]?.[0] ?? 0)
+
+  return {
+    totalTransfers,
+    completedTransfers,
+    pendingTransfers,
+    awaitingTransfers,
+    totalRefundCents,
+    totalActualLossCents,
+    totalEstimatedLossCents,
+    lossGapCents: Math.max(0, totalActualLossCents - totalEstimatedLossCents),
+    byType,
+    byFault: byFaultResult,
+  }
+}
+
+export async function getMonthlyCardStats() {
+  const db = await getDb()
+
+  const totalResult = db.exec('SELECT COUNT(*) as cnt FROM monthly_cards')
+  const totalCards = Number(totalResult[0]?.values[0]?.[0] ?? 0)
+
+  const activeResult = db.exec("SELECT COUNT(*) as cnt FROM monthly_cards WHERE status = 'active'")
+  const activeCards = Number(activeResult[0]?.values[0]?.[0] ?? 0)
+
+  const expiredResult = db.exec("SELECT COUNT(*) as cnt FROM monthly_cards WHERE status = 'expired'")
+  const expiredCards = Number(expiredResult[0]?.values[0]?.[0] ?? 0)
+
+  const frozenResult = db.exec("SELECT COUNT(*) as cnt FROM monthly_cards WHERE status = 'frozen'")
+  const frozenCards = Number(frozenResult[0]?.values[0]?.[0] ?? 0)
+
+  const byTypeResult = db.exec(
+    "SELECT card_type, COUNT(*) as cnt, COALESCE(SUM(total_washes), 0) as total_washes, COALESCE(SUM(remaining_washes), 0) as remaining_washes, COALESCE(SUM(total_reservations), 0) as total_reservations, COALESCE(SUM(remaining_reservations), 0) as remaining_reservations FROM monthly_cards GROUP BY card_type",
+  )
+  const byType: Record<string, {
+    count: number
+    totalWashes: number
+    remainingWashes: number
+    totalReservations: number
+    remainingReservations: number
+  }> = {}
+  if (byTypeResult[0]) {
+    for (const row of byTypeResult[0].values) {
+      byType[String(row[0])] = {
+        count: Number(row[1]),
+        totalWashes: Number(row[2]),
+        remainingWashes: Number(row[3]),
+        totalReservations: Number(row[4]),
+        remainingReservations: Number(row[5]),
+      }
+    }
+  }
+
+  const usedWashesResult = db.exec(
+    "SELECT COALESCE(SUM(total_washes - remaining_washes), 0) as total FROM monthly_cards",
+  )
+  const totalUsedWashes = Number(usedWashesResult[0]?.values[0]?.[0] ?? 0)
+
+  const usedReservationsResult = db.exec(
+    "SELECT COALESCE(SUM(total_reservations - remaining_reservations), 0) as total FROM monthly_cards",
+  )
+  const totalUsedReservations = Number(usedReservationsResult[0]?.values[0]?.[0] ?? 0)
+
+  return {
+    totalCards,
+    activeCards,
+    expiredCards,
+    frozenCards,
+    totalUsedWashes,
+    totalUsedReservations,
+    byType,
+  }
+}
+
 export async function getOverview() {
   const db = await getDb()
 
@@ -181,6 +365,9 @@ export async function getOverview() {
 
   const cancelledResult = db.exec("SELECT COUNT(*) as cnt FROM orders WHERE status = 'cancelled'")
   const cancelledOrders = Number(cancelledResult[0]?.values[0]?.[0] ?? 0)
+
+  const transferredResult = db.exec("SELECT COUNT(*) as cnt FROM orders WHERE status = 'transferred'")
+  const transferredOrders = Number(transferredResult[0]?.values[0]?.[0] ?? 0)
 
   const idleBayResult = db.exec("SELECT COUNT(*) as cnt FROM bays WHERE status = 'idle'")
   const idleBays = Number(idleBayResult[0]?.values[0]?.[0] ?? 0)
@@ -212,12 +399,37 @@ export async function getOverview() {
   )
   const todayRevenue = Number(todayRevenueRow?.total ?? 0)
 
+  const activeReservationsRow = queryOne(
+    "SELECT COUNT(*) as cnt FROM reservations WHERE status = 'reserved'",
+  )
+  const activeReservations = Number(activeReservationsRow?.cnt ?? 0)
+
+  const pendingTransfersRow = queryOne(
+    "SELECT COUNT(*) as cnt FROM order_transfers WHERE status IN ('pending', 'awaiting_confirmation')",
+  )
+  const pendingTransfers = Number(pendingTransfersRow?.cnt ?? 0)
+
+  const activeMonthlyCardsRow = queryOne(
+    "SELECT COUNT(*) as cnt FROM monthly_cards WHERE status = 'active'",
+  )
+  const activeMonthlyCards = Number(activeMonthlyCardsRow?.cnt ?? 0)
+
   return {
-    orders: { total: totalOrders, queued: queuedOrders, washing: washingOrders, completed: completedOrders, cancelled: cancelledOrders },
+    orders: {
+      total: totalOrders,
+      queued: queuedOrders,
+      washing: washingOrders,
+      completed: completedOrders,
+      cancelled: cancelledOrders,
+      transferred: transferredOrders,
+    },
     bays: { idle: idleBays, occupied: occupiedBays, fault: faultBays, total: idleBays + occupiedBays + faultBays },
     queue: { waiting: waitingCount },
     revenue: { total: totalRevenue, today: todayRevenue },
     faults: { active: activeFaults },
     today: { orders: todayOrders, revenue: todayRevenue },
+    reservations: { active: activeReservations },
+    transfers: { pending: pendingTransfers },
+    monthlyCards: { active: activeMonthlyCards },
   }
 }

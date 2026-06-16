@@ -48,4 +48,31 @@ router.get('/overview', async (req: Request, res: Response): Promise<void> => {
   }
 })
 
+router.get('/reservations', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await statsService.getReservationStats()
+    res.json({ success: true, data: result })
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+router.get('/fault-transfers', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await statsService.getFaultTransferStats()
+    res.json({ success: true, data: result })
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+router.get('/monthly-cards', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await statsService.getMonthlyCardStats()
+    res.json({ success: true, data: result })
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 export default router

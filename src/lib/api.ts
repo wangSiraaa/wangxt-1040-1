@@ -135,6 +135,158 @@ export const fetchCancellationStats = () =>
 
 export const fetchOverview = () => request<any>("/stats/overview");
 
+// ── Faults Extras ──
+export const fetchPendingTransfers = () =>
+  request<any[]>("/faults/transfers/pending");
+
+export const fetchFaultTransfers = (faultId: number) =>
+  request<any[]>(`/faults/${faultId}/transfers`);
+
+export const executeTransfer = (id: number, operatorName: string) =>
+  post<any>(`/faults/transfers/${id}/execute`, {
+    operator_name: operatorName,
+  });
+
+export const confirmManualTransfer = (
+  id: number,
+  decision: "refund" | "requeue",
+  operatorName: string,
+  customRefundAmount?: number
+) =>
+  post<any>(`/faults/transfers/${id}/confirm`, {
+    decision,
+    operator_name: operatorName,
+    custom_refund_amount: customRefundAmount,
+  });
+
+// ── Reservations ──
+export const fetchReservations = (
+  status?: string,
+  startDate?: string,
+  endDate?: string
+) => {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  const qs = params.toString();
+  return request<any[]>(`/reservations${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchAvailableTimeSlots = (date?: string) =>
+  request<any[]>(
+    `/reservations/available-slots${date ? `?date=${date}` : ""}`
+  );
+
+export const createReservation = (data: {
+  plate_number: string;
+  car_type: string;
+  service_package: string;
+  reserved_time: string;
+  grace_minutes?: number;
+  operator_name?: string;
+}) => post<any>("/reservations", data);
+
+export const checkInReservation = (
+  id: number,
+  data?: { operator_name?: string }
+) => post<any>(`/reservations/${id}/check-in`, data);
+
+export const vipSkipLine = (id: number, operatorName: string) =>
+  post<any>(`/reservations/${id}/skip-line`, {
+    operator_name: operatorName,
+  });
+
+export const markReservationNoShow = (id: number, operatorName: string) =>
+  post<any>(`/reservations/${id}/no-show`, {
+    operator_name: operatorName,
+  });
+
+export const cancelReservation = (
+  id: number,
+  reason: string,
+  operatorName: string
+) =>
+  post<any>(`/reservations/${id}/cancel`, {
+    reason,
+    operator_name: operatorName,
+  });
+
+// ── Monthly Cards ──
+export const fetchMonthlyCards = (status?: string) =>
+  request<any[]>(
+    `/monthly-cards${status ? `?status=${status}` : ""}`
+  );
+
+export const fetchMonthlyCard = (plateNumber: string) =>
+  request<any>(`/monthly-cards/${plateNumber}`);
+
+export const fetchMonthlyCardEligibility = (plateNumber: string) =>
+  request<any>(`/monthly-cards/${plateNumber}/eligibility`);
+
+export const createMonthlyCard = (data: {
+  plate_number: string;
+  card_type: "basic" | "premium" | "ultimate";
+  operator_name?: string;
+}) => post<any>("/monthly-cards", data);
+
+export const useMonthlyCardWash = (id: number, operatorName: string) =>
+  post<any>(`/monthly-cards/${id}/use-wash`, {
+    operator_name: operatorName,
+  });
+
+export const useMonthlyCardReservation = (
+  id: number,
+  operatorName: string
+) =>
+  post<any>(`/monthly-cards/${id}/use-reservation`, {
+    operator_name: operatorName,
+  });
+
+export const refundMonthlyCardWash = (id: number, operatorName: string) =>
+  post<any>(`/monthly-cards/${id}/refund-wash`, {
+    operator_name: operatorName,
+  });
+
+// ── Timeline ──
+export const fetchTimelineEvents = (options?: {
+  limit?: number;
+  offset?: number;
+  eventTypes?: string[];
+  bayId?: number;
+  orderId?: number;
+  startTime?: string;
+  endTime?: string;
+}) => {
+  const params = new URLSearchParams();
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.offset) params.set("offset", String(options.offset));
+  if (options?.eventTypes?.length)
+    params.set("event_types", options.eventTypes.join(","));
+  if (options?.bayId) params.set("bay_id", String(options.bayId));
+  if (options?.orderId) params.set("order_id", String(options.orderId));
+  if (options?.startTime) params.set("start_time", options.startTime);
+  if (options?.endTime) params.set("end_time", options.endTime);
+  const qs = params.toString();
+  return request<any[]>(`/timeline${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchQueueTimeline = (limit: number = 50) =>
+  request<any[]>(`/timeline/queue?limit=${limit}`);
+
+export const addTimelineEvent = (data: any) =>
+  post<any>("/timeline", data);
+
+// ── Stats Extras ──
+export const fetchReservationStats = () =>
+  request<any>("/stats/reservations");
+
+export const fetchFaultTransferStats = () =>
+  request<any>("/stats/fault-transfers");
+
+export const fetchMonthlyCardStats = () =>
+  request<any>("/stats/monthly-cards");
+
 // ── Operation Logs ──
 export const fetchOperationLogs = (limit?: number, offset?: number) => {
   const params = new URLSearchParams();
