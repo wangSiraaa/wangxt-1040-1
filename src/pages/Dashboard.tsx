@@ -119,7 +119,12 @@ export default function Dashboard() {
     try {
       if (action === 'call') {
         if (!perms.canManageQueue) { alert('无权限'); return }
-        await callNext()
+        const res: any = await callNext()
+        if (res?.paymentRequired) {
+          alert(res.message || '该订单尚未支付，请先完成付款')
+        } else if (res?.message) {
+          alert(res.message)
+        }
       }
       else if (action === 'complete') {
         if (!perms.canReleaseBay) { alert('无权限'); return }
@@ -137,7 +142,12 @@ export default function Dashboard() {
     try {
       if (action === 'call') {
         if (!perms.canManageQueue) { alert('无权限'); return }
-        await callNext()
+        const res: any = await callNext()
+        if (res?.paymentRequired) {
+          alert(res.message || '该订单尚未支付，请先完成付款')
+        } else if (res?.message) {
+          alert(res.message)
+        }
       }
       else if (action === 'cancel') {
         if (!perms.canCancelOrder) { alert('无权限'); return }
@@ -227,13 +237,14 @@ export default function Dashboard() {
                   <th className="px-4 py-3 text-left">套餐</th>
                   <th className="px-4 py-3 text-left">预计到店</th>
                   <th className="px-4 py-3 text-left">等待时长</th>
+                  <th className="px-4 py-3 text-left">支付状态</th>
                   <th className="px-4 py-3 text-left">状态</th>
                   <th className="px-4 py-3 text-left">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {queue.length === 0 && (
-                  <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-500">暂无排队</td></tr>
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-500">暂无排队</td></tr>
                 )}
                 {queue.map((q, i) => (
                   <tr key={q.id} className="border-b border-white/5 hover:bg-white/5">
@@ -243,6 +254,15 @@ export default function Dashboard() {
                     <td className="px-4 py-3">{pkgLabels[q.service_package] || q.service_package}</td>
                     <td className="px-4 py-3 font-mono">{q.estimated_arrival_minutes}分钟</td>
                     <td className="px-4 py-3 font-mono">第{q.position}位</td>
+                    <td className="px-4 py-3">
+                      {q.payment_status === 'paid' ? (
+                        <span className="px-2 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400">已支付</span>
+                      ) : q.payment_method === 'onsite' ? (
+                        <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400">到店支付</span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-400">未支付</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded text-xs ${q.status === 'waiting' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}`}>
                         {q.status === 'waiting' ? '等待中' : '已叫号'}

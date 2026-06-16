@@ -101,7 +101,15 @@ export default function StaffPage() {
 
   const handleCallNext = async () => {
     if (!perms.canManageQueue) { alert('无权限'); return }
-    try { await callNext(); refresh() }
+    try {
+      const res: any = await callNext()
+      if (res?.paymentRequired) {
+        alert(res.message || '该订单尚未支付，请先完成付款')
+      } else if (res?.message) {
+        alert(res.message)
+      }
+      refresh()
+    }
     catch (e: any) { alert(e.message) }
   }
 

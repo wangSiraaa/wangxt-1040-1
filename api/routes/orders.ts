@@ -58,7 +58,8 @@ router.patch('/:id/pay', async (req: Request, res: Response): Promise<void> => {
 router.post('/:id/start-wash', async (req: Request, res: Response): Promise<void> => {
   try {
     const orderId = Number(req.params.id)
-    const result = await orderService.startWash(orderId)
+    const { operator_name } = req.body
+    const result = await orderService.startWash(orderId, operator_name || 'system')
     res.json({ success: true, data: result })
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message })

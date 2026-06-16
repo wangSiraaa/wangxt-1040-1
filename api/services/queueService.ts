@@ -179,7 +179,7 @@ export async function joinQueue(data: JoinQueueData) {
 
 export async function getQueue() {
   return queryAll(
-    `SELECT qe.*, o.plate_number, o.base_amount, o.total_amount
+    `SELECT qe.*, o.plate_number, o.base_amount, o.total_amount, o.payment_status, o.payment_method
      FROM queue_entries qe
      JOIN orders o ON qe.order_id = o.id
      WHERE qe.status IN ('waiting', 'called')
@@ -190,17 +190,10 @@ export async function getQueue() {
 export async function callNext() {
   const db = await getDb()
 
-  const bayResult = db.exec(
-    "SELECT id, name FROM bays WHERE status = 'idle' ORDER BY id ASC LIMIT 1",
-  )
-  if (!bayResult[0] || bayResult[0].values.length === 0) {
-    throw new Error('没有空闲车位可用')
-  }
-  const bayId = Number(bayResult[0].values[0][0])
-  const bayName = String(bayResult[0].values[0][1])
-
   const nextResult = db.exec(
-    `SELECT qe.id, qe.order_id, qe.position FROM queue_entries qe
+    `SELECT qe.id, qe.order_id, qe.position, o.plate_number, o.payment_status, o.payment_method, o.total_amount
+     FROM queue_entries qe
+     JOIN orders o ON qe.order_id = o.id
      WHERE qe.status = 'waiting'
      ORDER BY qe.position ASC LIMIT 1`,
   )
@@ -209,8 +202,70 @@ export async function callNext() {
   }
   const qeId = Number(nextResult[0].values[0][0])
   const orderId = Number(nextResult[0].values[0][1])
+  const position = Number(nextResult[0].values[0][2])
+  const plateNumber = String(nextResult[0].values[0][3])
+  const paymentStatus = String(nextResult[0].values[0][4])
+  const paymentMethod = String(nextResult[0].values[0][5])
+  const totalAmount = Number(nextResult[0].values[0][6])
 
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+
+  if (paymentStatus !== 'paid') {
+    db.run(
+      `UPDATE queue_entries SET status = 'called', called_at = ? WHERE id = ?`,
+      [now, qeId],
+    )
+    saveDbToDisk()
+    await addLog({
+      operator_role: 'staff',
+      operator_name: 'system',
+      action: 'call_next',
+      target_order_id: orderId,
+      details: `叫号：车牌${plateNumber}（订单#${orderId}，位置#${position}），支付状态:${paymentStatus === 'unpaid' ? '未支付' : paymentStatus}，支付方式:${paymentMethod === 'onsite' ? '到店支付' : paymentMethod}。提示：需先完成付款才能入场洗车。`,
+    })
+    return {
+      queueEntryId: qeId,
+      orderId,
+      plateNumber,
+      paymentRequired: true,
+      paymentMethod,
+      totalAmount,
+      message: `已呼叫车牌${plateNumber}，但该订单尚未支付，请车主先完成付款后再入场。应付金额：¥${(totalAmount / 100).toFixed(2)}`,
+      bayId: null,
+      bayName: null,
+    }
+  }
+
+  const bayResult = db.exec(
+    "SELECT id, name FROM bays WHERE status = 'idle' ORDER BY id ASC LIMIT 1",
+  )
+  if (!bayResult[0] || bayResult[0].values.length === 0) {
+    db.run(
+      `UPDATE queue_entries SET status = 'called', called_at = ? WHERE id = ?`,
+      [now, qeId],
+    )
+    saveDbToDisk()
+    await addLog({
+      operator_role: 'staff',
+      operator_name: 'system',
+      action: 'call_next',
+      target_order_id: orderId,
+      details: `叫号：车牌${plateNumber}（已支付），但当前无空闲车位，已标记呼叫待分配`,
+    })
+    return {
+      queueEntryId: qeId,
+      orderId,
+      plateNumber,
+      paymentRequired: false,
+      paymentMethod,
+      totalAmount,
+      message: `已呼叫车牌${plateNumber}，但当前暂无空闲车位，请稍候`,
+      bayId: null,
+      bayName: null,
+    }
+  }
+  const bayId = Number(bayResult[0].values[0][0])
+  const bayName = String(bayResult[0].values[0][1])
 
   db.run(
     `UPDATE queue_entries SET status = 'called', assigned_bay_id = ?, called_at = ? WHERE id = ?`,
@@ -235,10 +290,20 @@ export async function callNext() {
     action: 'call_next',
     target_bay_id: bayId,
     target_order_id: orderId,
-    details: `叫号：分配${bayName}，订单#${orderId}`,
+    details: `叫号：分配${bayName}，车牌${plateNumber}，订单#${orderId}（已支付），已开始洗车`,
   })
 
-  return { queueEntryId: qeId, bayId, bayName, orderId }
+  return {
+    queueEntryId: qeId,
+    bayId,
+    bayName,
+    orderId,
+    plateNumber,
+    paymentRequired: false,
+    paymentMethod,
+    totalAmount,
+    message: `已呼叫车牌${plateNumber}，分配${bayName}，开始洗车`,
+  }
 }
 
 export async function leaveQueue(id: number) {

@@ -213,7 +213,7 @@ export async function payOrder(orderId: number) {
   return { orderId, paymentStatus: 'paid' }
 }
 
-export async function startWash(orderId: number) {
+export async function startWash(orderId: number, operatorName: string = 'system') {
   const db = await getDb()
 
   const order = queryOne('SELECT * FROM orders WHERE id = ?', [orderId])
@@ -225,21 +225,45 @@ export async function startWash(orderId: number) {
     throw new Error('未支付订单不能开始洗车，请先完成支付')
   }
 
+  if (order.payment_status === 'refunded') {
+    throw new Error('该订单已退款，不能开始洗车')
+  }
+
   if (order.status === 'washing') {
     throw new Error('订单已在洗车中')
   }
 
-  if (order.status === 'completed' || order.status === 'cancelled') {
-    throw new Error('订单已结束，无法开始洗车')
+  if (order.status === 'completed') {
+    throw new Error('订单已完成，无法开始洗车')
+  }
+
+  if (order.status === 'cancelled') {
+    throw new Error('订单已取消，无法开始洗车')
   }
 
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
-  const bayResult = db.exec("SELECT id FROM bays WHERE status = 'idle' ORDER BY id ASC LIMIT 1")
-  if (!bayResult[0] || bayResult[0].values.length === 0) {
-    throw new Error('没有空闲车位')
+  let bayId: number | null = null
+
+  const qeRow = queryOne(
+    "SELECT assigned_bay_id FROM queue_entries WHERE order_id = ? AND status = 'called' AND assigned_bay_id IS NOT NULL",
+    [orderId],
+  )
+  if (qeRow?.assigned_bay_id) {
+    bayId = Number(qeRow.assigned_bay_id)
+    const bay = queryOne("SELECT * FROM bays WHERE id = ?", [bayId])
+    if (!bay || bay.status !== 'idle') {
+      bayId = null
+    }
   }
-  const bayId = Number(bayResult[0].values[0][0])
+
+  if (!bayId) {
+    const bayResult = db.exec("SELECT id FROM bays WHERE status = 'idle' ORDER BY id ASC LIMIT 1")
+    if (!bayResult[0] || bayResult[0].values.length === 0) {
+      throw new Error('没有空闲车位可用，请稍后再试')
+    }
+    bayId = Number(bayResult[0].values[0][0])
+  }
 
   db.run(
     "UPDATE orders SET status = 'washing', bay_id = ?, started_at = ? WHERE id = ?",
@@ -260,11 +284,11 @@ export async function startWash(orderId: number) {
 
   await addLog({
     operator_role: 'staff',
-    operator_name: 'system',
+    operator_name: operatorName,
     action: 'start_wash',
     target_bay_id: bayId,
     target_order_id: orderId,
-    details: `订单#${orderId}开始洗车，分配车位#${bayId}`,
+    details: `${operatorName}启动订单#${orderId}洗车，分配车位#${bayId}`,
   })
 
   return { orderId, bayId, startedAt: now }

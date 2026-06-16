@@ -92,8 +92,8 @@ export const cancelOrder = (
 
 export const payOrder = (id: number) => patch<any>(`/orders/${id}/pay`);
 
-export const startWash = (id: number) =>
-  post<any>(`/orders/${id}/start-wash`);
+export const startWash = (id: number, operatorName?: string) =>
+  post<any>(`/orders/${id}/start-wash`, operatorName ? { operator_name: operatorName } : undefined);
 
 export const overtimeCharge = (
   id: number,
